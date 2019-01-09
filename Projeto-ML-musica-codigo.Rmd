@@ -1,0 +1,593 @@
+---
+title: "Projeto ML musica"
+author: "Grupo P10"
+output: pdf_document
+---
+Como cada membro trabalhou com parte dos códigos estes ficaram separados,os códigos serão postados 
+unificadamente neste Rmd, talvez fique um pouco confuso.
+
+##Projeto ML sobre gêneros musicais - Floresta aleatória - 
+
+```{r loading_packages, include=FALSE}
+#Instalando pacotes e preparando diretorio
+library(tidyverse)
+library(caret)
+library(xgboost)
+library(e1071)
+library(dplyr)
+library(klaR)
+library(purrr)
+library(FNN)
+library(rpart.plot)
+library(rpart)
+library(randomForest)
+```
+
+### Carregando e preparando o conjunto de dados 
+
+```{r Reading_dataset, include=FALSE}
+# define the local directory
+old_dir<- getwd()
+new_dir<- c("C:\\Users\\Rodolfo Lindemute\\Desktop\\Rodolfo\\books\\facu\\12 Semestre\\Topicos_ML\\Projeto\\music data")
+setwd(new_dir)
+# define the filename
+filename1 <- "train_dataset.csv"
+filename2 <- "validation_dataset.csv"
+# load the CSV file from the local directory
+dataset <- read.csv(filename1)
+test<-read.csv(filename2)
+#Fast vizualization
+dim(dataset)
+head(dataset, 4)[,c(1:5,dim(dataset)[2])]
+dir<- old_dir
+```
+
+Se for pelo PCA
+
+```{r}
+#### Performing PCA
+pca_treino = dataset[,-1]
+pca_teste = test
+pca = prcomp( pca_treino, scale = T )
+
+# variancia por componente
+pr_var = ( pca$sdev )^2 
+
+# % of variancia explicada
+prop_varex = pr_var / sum( pr_var )
+
+#criando banco com PCA
+treino_pca = data.frame(GENRE= dataset$GENRE,pca$x)
+teste_pca = data.frame(GENRE= test$GENRE, predict( pca, newdata = pca_teste))
+
+#Definindo os dados de treino.teste pelo pca
+dataset<- treino_pca[1:23]
+test<- teste_pca[1:23]
+
+dim(dataset)
+```
+
+Se for PCA E LDA
+
+```{r}
+#PCA novamente
+#### Performing PCA
+pca_treino = dataset[,-1]
+pca_teste = test
+pca = prcomp( pca_treino, scale = T )
+
+# variancia por componente
+pr_var = ( pca$sdev )^2 
+
+# % of variancia explicada
+prop_varex = pr_var / sum( pr_var )
+
+#criando banco com PCA
+treino_pca = data.frame(GENRE= dataset$GENRE,pca$x)
+teste_pca = data.frame(GENRE= test$GENRE, predict( pca, newdata = pca_teste))
+
+#LDA
+library(MASS)
+fit= lda(GENRE~., data=treino_pca[1:169])
+confusionMatrix(predict(fit,teste_pca)$class,
+                factor(teste_pca$GENRE))
+
+loads=as.matrix(fit$scaling)
+treino_lda= as.matrix(treino_pca[2:169]) %*% loads
+treino_lda= as.data.frame(treino_lda)
+treino_lda$GENRE = dataset$GENRE
+
+teste_lda= as.matrix(teste_pca[2:169]) %*% loads
+teste_lda= as.data.frame(teste_lda)
+teste_lda$GENRE = test$GENRE
+
+#Definindo os dados de treino.teste pelo lda
+dataset<- treino_lda
+validation<- teste_lda
+
+dim(dataset)
+```
+
+#### Criando os dados de teste 
+
+Agora temos as seguintes variaveis:
+
+dataset: dados de treino com `r dim(dataset)[1]` observa??es que serao usadas para treinar o nosso modelo
+
+test: conjunto de teste com `r dim(dataset)[1]` observa??es que vao ser usadas mais tarde quando tivermos escolhido o melhor modelo
+
+##Floresta Aleatoria - usando o pacote caret
+
+Nos vamos usar o pacote 'caret' para automaticamente selecionar o valor ?timo para o par?metro 'mtry', que ? o n?mero de vari?veis preditoras selecionadas aleat?riamente em cada cria??o de n? das arvores, e vai ajustar a floresta aleat?ria que explica melhor o nosso conjunto de dados
+
+Criando a floresta aleat?ria usando o controle 1 OOB
+
+```{r}
+control1 <- trainControl(method="oob")
+set.seed(12)
+rf = train(GENRE ~ ., data = dataset,
+                   method = "rf", trControl = control1, nodesize= 8)
+rf
+```
+
+Matriz de confus?o, acur?cia e erro de classifica??o no conjunto de teste
+
+```{r}
+rf$finalModel$confusion
+```
+
+### Predicao 
+
+Predizendo no conjunto de teste
+
+```{r}
+pred.rf <- predict(rf, newdata= test)
+```
+
+Matriz de confus?o, acur?cia e erro de classifica??o no conjunto de teste:
+
+```{r}
+cm.rf.pred= caret::confusionMatrix(pred.rf, test$GENRE)
+cm.rf.pred$table
+```
+
+E uma acuracia de `r cm.rf.pred$overall[1]`.
+
+Sensitividade e outras informa??es de cada classe, no caso cada g?nero.
+
+```{r}
+cm.rf.pred$byClass
+```
+
+A import?ncia de cada vari?vel no nosso conjunto de teste
+
+```{r echo=FALSE}
+#head(importance(rf$finalModel))
+# Plot MeanDecreaseGini
+varImpPlot(rf$finalModel, type = 2)
+#showing the importance in %
+#head(varImp(rf$finalModel))
+```
+
+Mostrando as 20 vari?veis que obtiveram mais import?ncia no modelo
+
+```{r}
+vec_varimp<- as.vector(varImp(rf$finalModel))
+sort_aux<- function(x) sort(x,decreasing = TRUE)
+head(apply(vec_varimp, 2, sort_aux), 20)
+```
+
+
+Estes códigos foram feitos em um script comentado
+```{r}
+#setup
+library(tidyverse)
+library(caret)
+library(xgboost)
+library(RColorBrewer)
+library(MASS)
+library(gridExtra)
+library(beepr)
+
+#lendo dados
+teste=read_csv("genresTest (1).csv")
+treino= read_csv("genresTrain.csv")
+testeresposta= read_csv("genresTestPrivate.arff",col_names = "GENRE")
+teste= cbind(teste,testeresposta)
+rm(testeresposta)
+
+###################
+## Aplicando PCA ##
+###################
+pca_treino = treino %>% dplyr::select(-GENRE)
+pca_teste = teste
+pca = prcomp( pca_treino, scale = T )
+
+# variancia por componente
+pr_var = ( pca$sdev )^2 
+
+# % of variancia explicada
+prop_varex = pr_var / sum( pr_var )
+prop_varacum= cumsum(prop_varex)
+
+#criando banco com PCA
+treino_pca = data.frame(GENRE= treino$GENRE,pca$x)
+teste_pca = data.frame(GENRE= teste$GENRE, predict( pca, newdata = pca_teste))
+
+#Graficos
+n95= length(which(cumsum(prop_varex)<=.95))
+n1= length(which(prop_varex >=.01))
+prop1=cumsum(prop_varex[1:n1])[22]
+
+pcaplot=data.frame(PCA= 1:191,prop_varex,prop_varacum) 
+
+
+plot1= ggplot(pcaplot,aes(PCA,prop_varex))+
+  geom_point()+
+  geom_vline(aes(xintercept=n95,col="73"))+
+  geom_vline(aes(xintercept=n1,col="22"))+
+  ylab("Proporção da Variancia Explicada")+
+  scale_color_discrete(name="Qtd. PCA's")
+
+plot2= ggplot(pcaplot,aes(PCA,prop_varacum))+
+  geom_point()+
+  geom_vline(aes(xintercept=n95,col="73"))+
+  geom_vline(aes(xintercept=n1,col="22"))+
+  ylab("Proporção da Variancia Acumulada")+
+  scale_color_discrete(name="Qtd. PCA's")
+
+windows()
+grid.arrange(plot1, plot2, ncol=2)
+
+#cbPalette <- c( "#E69F00", "#56B4E9", "#009E73", "#F0E442", "#0072B2", "#D55E00", "#CC79A7")
+  
+ggplot(treino_pca,aes(x=PC1,y=PC2,col=GENRE))+
+  geom_point(alpha=.4)+
+  scale_colour_brewer(palette='Set1')
+#Banco onde as componentes explicam mais do que 1% da variabilidade
+treino22= treino_pca[1:23]
+teste22= teste_pca[1:23]
+
+#Banco onde as componentes explicam 95% da variabilidade da amostra
+treino73= treino_pca[1:74]
+teste73= teste_pca[1:74]
+
+#######
+##LDA##
+#######
+fit= lda(GENRE~., data=treino_pca[1:169])
+cflda_treino=confusionMatrix(predict(fit,treino_pca)$class,
+                factor(treino_pca$GENRE))
+
+cflda_testes=confusionMatrix(predict(fit,teste_pca)$class,
+                factor(teste_pca$GENRE))
+
+#sensitividade e especificidade
+write.csv(cflda_treino$byClass[,1:2],"se_lda_treino.csv")
+write.csv(cflda_testes$byClass[,1:2],"se_lda_teste.csv")
+
+#matriz de confusão
+write.csv(cflda_testes$table,"CM_lda_teste.csv")
+write.csv(cflda_treino$table,"CM_lda_treino.csv")
+
+#acuracia
+write.csv(cflda_testes$overall[1],"acur_lda_teste.csv")
+write.csv(cflda_treino$overall[1],"acur_lda_treino.csv")
+
+#Os valores podem ser retirado direto da função, o tempo de computação é rápido
+
+loads=as.matrix(fit$scaling)
+treino_lda= as.matrix(treino_pca[2:169]) %*% loads
+treino_lda= as.data.frame(treino_lda)
+treino_lda$GENRE = treino$GENRE
+
+teste_lda= as.matrix(teste_pca[2:169]) %*% loads
+teste_lda= as.data.frame(teste_lda)
+teste_lda$GENRE = teste$GENRE
+
+ggplot(treino_lda,aes(x=LD1,y=LD2, col=GENRE))+
+  geom_point(alpha=.4)+
+  scale_colour_brewer(palette="Set1")+
+  
+
+#######
+##QDA##
+#######
+fit2= qda(GENRE~., data=treino_pca[1:169])
+confusionMatrix(predict(fit2,treino_pca[1:169])$class,factor(treino_pca[1:169]$GENRE))
+confusionMatrix(predict(fit2,teste_pca[1:169])$class,factor(teste_pca[1:169]$GENRE))
+#Os valores podem ser retirado direto da função, o tempo de computação é rápido
+
+###########
+##XGBoost##
+###########
+grid <- expand.grid(
+  nrounds = 400,
+  max_depth = 3,
+  eta = 0.1,
+  gamma = 5,
+  colsample_bytree = .3, 
+  min_child_weight = 1,
+  subsample = 1
+)
+train_control <- trainControl(
+  method = "cv",
+  number=3,
+  allowParallel = T
+  )
+set.seed(13)
+xgb.fit <- train(
+  GENRE~.,
+  data= treino,
+  trControl = train_control,
+  tuneGrid = grid,
+  method = "xgbTree"
+)
+beep(3)
+
+cftree_treino=confusionMatrix(predict(xgb.fit,treino),factor(treino$GENRE))
+cftree_testes=confusionMatrix(predict(xgb.fit,teste),factor(teste$GENRE))
+
+#sensitividade e especificidade
+write.csv(cftree_treino$byClass[,1:2],"se_tree_treino.csv")
+write.csv(cftree_testes$byClass[,1:2],"se_tree_teste.csv")
+
+#matriz de confusão
+write.csv(cftree_testes$table,"CM_tree_teste.csv")
+write.csv(cftree_treino$table,"CM_tree_treino.csv")
+
+#acuracia
+write.csv(cftree_testes$overall[1],"acur_tree_teste.csv")
+write.csv(cftree_treino$overall[1],"acur_tree_treino.csv")
+
+#Melhor modelo:
+#acuracia treino: 97.3% 
+#acuracia teste: 76.89%
+
+#Modelos com PCA
+
+set.seed(13)
+xgb_22 <- train(
+  GENRE~.,
+  data= treino22,
+  trControl = train_control,
+  tuneGrid = grid,
+  method = "xgbTree"
+)
+beep(3)
+confusionMatrix(predict(xgb_22,treino22),factor(treino22$GENRE))
+confusionMatrix(predict(xgb_22,teste22),factor(teste22$GENRE))
+
+#acuracia treino: 85.14% 
+#acuracia teste: 66.36%
+
+set.seed(13)
+xgb_73 <- caret::train(
+  GENRE~.,
+  data= treino73,
+  trControl = train_control,
+  tuneGrid = grid_default,
+  method = "xgbTree"
+)
+confusionMatrix(predict(xgb_73,treino73),factor(treino73$GENRE))
+confusionMatrix(predict(xgb_73,teste73),factor(teste73$GENRE))
+#acuracia treino: 92.31%
+#acuracia teste: 69.59%
+
+#xgboost linear
+grid <- expand.grid(
+  nrounds = 400, 
+  eta= 0.1,
+  lambda = 0.2, 
+  alpha= 0.1 
+)
+train_control <- trainControl(
+  method = "cv",
+  number=3
+)
+
+xgb.linear <- train(
+  GENRE~.,
+  data= treino,
+  trControl = train_control,
+  tuneGrid = grid,
+  method = "xgbLinear"
+)
+beep(3)
+
+cflinear_treino=confusionMatrix(predict(xgb.linear,treino),factor(treino$GENRE))
+cflinear_testes=confusionMatrix(predict(xgb.linear,teste),factor(teste$GENRE))
+
+#sensitividade e especificidade
+write.csv(cflinear_treino$byClass[,1:2],"se_linear_treino.csv")
+write.csv(cflinear_testes$byClass[,1:2],"se_linear_teste.csv")
+
+#matriz de confusão
+write.csv(cflinear_testes$table,"CM_linear_teste.csv")
+write.csv(cflinear_treino$table,"CM_linear_treino.csv")
+
+#acuracia
+write.csv(cflinear_testes$overall[1],"acur_linear_teste.csv")
+write.csv(cflinear_treino$overall[1],"acur_linear_treino.csv")
+
+
+#melhor modelo:
+#acuracia treino: 100%
+#acuracia teste: 76.62%
+
+xgb22 <- train(
+  GENRE~.,
+  data= treino22,
+  trControl = train_control,
+  tuneGrid = grid,
+  method = "xgbLinear"
+)
+beep(3)
+confusionMatrix(predict(xgb22,treino22), treino22$GENRE)
+confusionMatrix(predict(xgb22,teste22), teste22$GENRE)
+#acuracia treino: 91,06%
+#acuracia teste: 66.33%
+
+xgb73 <- train(
+  GENRE~.,
+  data= treino73,
+  trControl = train_control,
+  tuneGrid = grid,
+  method = "xgbLinear"
+)
+beep(3)
+confusionMatrix(predict(xgb73,treino73), treino73$GENRE)
+confusionMatrix(predict(xgb73,teste73), teste73$GENRE)
+#acuracia treino: 92.89%
+#acuracia teste: 70.82%
+
+#########
+## KNN ##
+#########
+#setup
+library(caret)
+library(e1071)
+
+#modelo com 22 componentes
+set.seed(222)
+trControl = trainControl(method  = "cv", number  = 5)
+knn.22 = train(GENRE ~ .,
+               method     = "knn",
+               tuneGrid   = expand.grid(k = 1:20),
+               trControl  = trControl,
+               metric     = "Accuracy",
+               data       = treino22)
+
+cm22 = confusionMatrix(predict(knn.22,teste22),factor(teste22$GENRE))
+cm22_treino = confusionMatrix(predict(knn.22,teste22),factor(teste22$GENRE))
+
+cm73 = confusionMatrix(predict(knn.73,teste73),factor(teste73$GENRE))
+
+#modelo com 73 componentes
+set.seed(777)
+trControl = trainControl(method  = "cv", number  = 5)
+knn.73 = train(GENRE ~ .,
+               method     = "knn",
+               tuneGrid   = expand.grid(k = 1:20),
+               trControl  = trControl,
+               metric     = "Accuracy",
+               data       = treino73)
+
+
+#modelo total
+set.seed(111)
+
+trControl = trainControl(method  = "cv", number  = 5)
+knn.total = train(GENRE ~ .,
+                  method     = "knn",
+                  tuneGrid   = expand.grid(k = 1:20),
+                  trControl  = trControl,
+                  metric     = "Accuracy",
+                  data       = treino)
+cmtotal = confusionMatrix(predict(knn.total,teste),factor(teste$GENRE))
+
+
+#MODELO PCA E LDA
+
+
+trControl = trainControl(method  = "cv", number  = 5)
+knn.LDA = train(GENRE ~ .,
+                method     = "knn",
+                tuneGrid   = expand.grid(k = 1:20),
+                trControl  = trControl,
+                metric     = "Accuracy",
+                data       = treino_lda)
+cm_lda= confusionMatrix(predict(knn.LDA,teste_lda),factor(teste_lda$GENRE))
+```
+
+Alguns graficos foram feitos em outro script, é necessário criar bancos com resultados
+```{r}
+#Acuracia#
+##########
+#lendo os dados
+acur_knn22_teste=read.csv("acur_knn22_teste.csv")
+acur_knn73_teste=read.csv("acur_knn73_teste.csv")
+acur_knn_lda_teste=read.csv("acur_knn_lda_teste.csv")
+acur_knn_total_teste=read.csv("acur_knntotal_teste.csv")
+acur_knn22_treino=read.csv("acur_knn22_treino.csv")
+acur_knn73_treino=read.csv("acur_knn73_treino.csv")
+acur_knn_lda_treino=read.csv("acur_knn_lda_treino.csv")
+acur_knn_total_treino=read.csv("acur_knn_total_treino.csv")
+acur_tree_teste=read.csv("acur_tree_teste.csv")
+acur_linear_teste=read.csv("acur_linear_teste.csv")
+acur_tree_treino=read.csv("acur_tree_treino.csv")
+acur_linear_treino=read.csv("acur_tree_treino.csv")
+acur_rf_teste= read.table("Acc.rf.txt")
+acur_rf_PCA_teste= read.table("Acc.rf.PCA.txt")
+acur_rf_LDA_teste= read.table("Acc.rf.PCA.LDA.txt")
+acur_rf_treino= read.table("Acc.rf.treino.txt")
+acur_lda_teste=read.csv("acur_lda_teste.csv")
+acur_lda_treino=read.csv("acur_lda_treino.csv")
+#organizando em uma tabela
+
+acur_dados_treino= rbind(acur_knn22_treino,acur_knn73_treino,acur_knn_lda_treino,acur_knn_total_treino,
+                        acur_linear_treino,acur_tree_treino,acur_lda_treino)
+acur_dados_treino= acur_dados_treino[-1]
+names(acur_rf_treino)= "x"
+acur_dados_treino= rbind(acur_dados_treino,acur_rf_treino)
+acur_dados_treino$conjunto = "Treino"
+
+acur_dados_teste= rbind(acur_knn22_teste,acur_knn73_teste,acur_knn_lda_teste,acur_knn_total_teste,
+                        acur_linear_teste,acur_tree_teste,acur_lda_teste)
+acur_dados_teste=acur_dados_teste[-1]
+acur_dados_teste= rbind(acur_dados_teste,acur_rf_teste,acur_rf_PCA_teste,acur_rf_LDA_teste)
+acur_dados_teste$conjunto = "Teste"
+
+acur_dados = rbind(acur_dados_treino,acur_dados_teste)
+names(acur_dados)= c("Acuracia","Conjunto")
+acur_dados$Modelo = c("KNN_22","KNN_73","KNN_LDA","KNN","XGB_Tree", 
+                      "XGB_Linear","LDA","RF","RF_PCA",'RF_LDA')
+
+Acuracia=  cbind(c("KNN_22","KNN_73","KNN_LDA","KNN","XGB_Tree", 
+                   "XGB_Linear","LDA","RF","RF_PCA",'RF_LDA'),acur_dados_teste[1],acur_dados_treino[1])
+names(Acuracia)=c("Modelo","Teste","Treino")
+
+library(xtable)
+xtable(Acuracia)
+#Grafico
+
+ggplot(acur_dados,aes(y= Acuracia,x=Modelo, fill= Conjunto))+
+  geom_bar(stat = "identity",position = "dodge")
+
+
+#Matriz de Confusão#
+####################
+Predito = predict(xgb.fit,teste)
+Real = as.factor(teste$GENRE)
+confusion_matrix <- as.data.frame(table(Predito, Real))
+
+ggplot(data = confusion_matrix,
+       mapping = aes(x = Predito,
+                     y = Real,fill= Freq )) +
+  geom_tile(color="white")+
+  geom_text(aes(label= Freq))+
+  scale_fill_gradient2( high = "Blue",guide = F)+
+  theme(panel.background = element_blank())
+
+  
+#Especificidade e Sensitividade#
+################################
+se_dados = read.csv('se_tree_teste.csv')
+se_dados$Genero = c("Blues","Classical","Jazz","Metal","Pop","Rock")  
+se_dados = se_dados[-1]                     
+names(se_dados)= c("Sensitividade","Especificidade","Genero")
+se_dados.tidy= gather(se_dados,"Medida","Valor",-Genero)
+
+ggplot(se_dados.tidy,aes(x=Genero,y=Valor,fill=Medida))+
+  geom_bar(stat = "identity",position = "dodge")
+
+#frequencia de observações por genero#
+######################################
+genres=as.data.frame(table(teste$GENRE))
+names(genres)= c("Genero","Frequencia")
+ggplot(genres,aes(Genero,Frequencia,fill=Genero))+
+  geom_bar(stat = "identity")+
+  scale_fill_brewer(palette="Set1",guide=FALSE)
+  
+```
+
